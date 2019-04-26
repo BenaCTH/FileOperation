@@ -1,43 +1,10 @@
-﻿using AvePoint.Aristotle.Common.Domain;
-using AvePoint.Aristotle.Common.Domain.Authoring;
-using AvePoint.Aristotle.Common.Infrastructure.Core;
-using AvePoint.Aristotle.Common.RESTAPI;
-using AvePoint.Aristotle.Common.Utility.Constant;
-using AvePoint.Aristotle.Common.Utility.RBAC.RoleDefinition;
-using AvePoint.Aristotle.Common.Utility.Uploader;
-using AvePoint.Aristotle.FeatureCommon.Domain;
-using AvePoint.Aristotle.FeatureCommon.Domain.Scheduling;
 
 namespace GuiCommon.Web.Controllers
 {
    
     public class CommonController : ApiBaseController
     {
-        private readonly string ScopePath = "SAWebCommonContainer/SAWebCommon/Folder";
-        private readonly string Category = "SAWebCommon";
-        private readonly DbContext _context;
-        private readonly PeoplePickerService peoplePickerService;
-        private readonly IHostingEnvironment _hostingEnvironment;
-        private readonly LCMSUploaderService _uploaderService;
-        private readonly CommonQueryService _commonQueryService;
-        private readonly ICacheService _cacheService;
-        private readonly IHttpContextAccessor _accessor;
-        private readonly IConfiguration _configuration;
-
-        public CommonController(IHostingEnvironment hostingEnvironment, IDBRepository dbRepository, PeoplePickerService peoplePickerService, DbContext context, IServiceProvider serviceProvider, LCMSUploaderService uploaderService, CommonQueryService commonQueryService, ICacheService cache, IHttpContextAccessor accessor, IConfiguration configuration) : base(serviceProvider)
-        {
-            _hostingEnvironment = hostingEnvironment;
-            this.peoplePickerService = peoplePickerService;
-            _uploaderService = uploaderService;
-            _context = context;
-            _commonQueryService = commonQueryService;
-            _cacheService = cache;
-            _accessor = accessor;
-            _configuration = configuration;
-        }
-
         [HttpPost("UploadSegmentFile")]
-        [DisableFormValueModelBinding]
         [RequestSizeLimit(long.MaxValue)]
         [RequestFormLimits(MultipartBodyLengthLimit = long.MaxValue)]
         public async Task<IActionResult> UploadSegmentFile()
@@ -130,9 +97,8 @@ namespace GuiCommon.Web.Controllers
             }
 
             return Request.OK(result);
-        }
-       
-        //[PermissionChecker(new string[] { PermissionConstants.Default }, true)]
+        }       
+    
         [HttpGet("DownloadFile")]
         [AllowAnonymous]
         [RequestSizeLimit(long.MaxValue)]
@@ -259,6 +225,138 @@ namespace GuiCommon.Web.Controllers
 
         }
         #endregion
+	
+	//Upload File to tempFile,then merge file 
+	[HttpPost("UploadFileTemp")]
+        [DisableFormValueModelBinding]
+        [RequestSizeLimit(long.MaxValue)]
+        [RequestFormLimits(MultipartBodyLengthLimit = long.MaxValue)]
+        public async Task<IActionResult> UploadFileTemp()
+        {
+            var data = Request.Form.Files["file"];
+            string lastModified = Request.Form["lastModified"].ToString();
+            var total = Convert.ToInt32(Request.Form["total"]);
+            var fileName = Request.Form["fileName"];
+            var index = Convert.ToInt32(Request.Form["index"]);
+            MergeFileModel result = new MergeFileModel();
+            string temporary = Path.Combine(@"D:\tempFiles", lastModified);//临时保存分块的目录
+            try
+            {
+                if (!Directory.Exists(temporary))
+                    Directory.CreateDirectory(temporary);
+                string filePath = Path.Combine(temporary, index.ToString());
+                if (!Convert.IsDBNull(data))
+                {
+                    await Task.Run(() =>
+                    {
+                        using (var fs = new FileStream(filePath, FileMode.Create))
+                        {
+                            data.CopyTo(fs);
+                        }
+                    });
+                }
+
+                if (total == index)
+                {
+                    result = await FileMerge(lastModified, fileName);
+                }
+                result.FileNumber = index;
+            }
+            catch (TaskCanceledException ex)
+            {
+                logger.Error("Connection timed out and file upload failed. ", ex);
+                return Request.OK(new { msg = I18NEntity.GetString("GC_Common_Uploader_TimeOut_Message") });
+            }
+            catch (ValidationException ex)
+            {
+                logger.Error("Validation file upload failed. ", ex);
+                return Request.OK(new { msg = I18NEntity.GetString("GC_Common_Uploader_Failed_Message"), ex.Status });
+            }
+            catch (Exception ex)
+            {
+                logger.Error("Upload file to lcms server failed. ", ex);
+            }
+
+            return Request.OK(result);
+        }
+
+        public async Task<MergeFileModel> FileMerge(string lastModified, string fileName)
+        {
+            MergeFileModel result = new MergeFileModel();
+            try
+            {
+                var temporary = Path.Combine(@"D:\tempFiles", lastModified);//临时文件夹
+                string fileExt = Path.GetExtension(fileName);//获取文件后缀
+                var files = Directory.GetFiles(temporary);//获得下面的所有文件
+                var finalPath = Path.Combine(@"D:\tempFiles", lastModified, fileName);//最终的文件名
+                string scopePath = Request.Form["scopePath"];
+                string category = Request.Form["category"];
+
+                UploadFileRequestInfo info = new UploadFileRequestInfo()
+                {
+                    ScopePath = !string.IsNullOrEmpty(scopePath) ? scopePath : ScopePath,
+                    Category = !string.IsNullOrEmpty(category) ? category : Category
+                };
+
+                UploadFileResponseInfo o;
+                using (var fs = new FileStream(finalPath, FileMode.Create))
+                {
+                    foreach (var part in files.OrderBy(x => x.Length).ThenBy(x => x))//排一下序，保证从0-N Write
+                    {
+                        var bytes = System.IO.File.ReadAllBytes(part);
+                        await fs.WriteAsync(bytes, 0, bytes.Length);
+                        bytes = null;
+                        System.IO.File.Delete(part);//删除分块
+                    }
+                    fs.Position = 0;
+                    logger.Info($"Merge file successfully, {DateTime.Now} {fileName}, size {fs.Length}");
+
+                    logger.Info($"Bengin send stream to lcsm, {DateTime.Now} {fileName}, size {fs.Length}");
+
+                    o = await _uploaderService.UploadFile(info, new Refit.StreamPart(fs, fileName));
+
+                    logger.Info($"End send stream to lcsm, {DateTime.Now} {fileName}");
+
+                    result.MergeResult = true;
+                }
+                try
+                {
+                    if (System.IO.File.Exists(finalPath))
+                    {
+                        System.IO.File.Delete(finalPath);
+                        logger.Info($"delete temp file successfully , {finalPath}");
+                    }
+                    if (Directory.Exists(temporary))
+                    {
+                        Directory.Delete(temporary);//删除文件夹 
+                        logger.Info($"delete temp folder successfully , {temporary}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    logger.Error($"delete temp folder error : {ex.ToString()}");
+                }
+
+                if (o.IsSucceed)
+                {
+                    o.Category = Category;
+                    result.ResponseFiles.Add(o);
+                }
+                else
+                {
+                    result.Msg = o.ErrorMsg;
+                    result.Info = o;
+                }
+
+            }
+            catch (Exception ex)
+            {
+                logger.Error($"merge file error : {ex.ToString()}");
+            }
+            return result;
+        }
+
+
 
 	}
     public class FileResponseModel
