@@ -35,18 +35,18 @@ download 时 当文件超出指定大小后按照HttpWebRequest 的当时请求�
           
 # IE 浏览器不解析字体图标解决办法
 
-  if (url.Contains("resources"))
-                    {
-                        context.Response.GetTypedHeaders().CacheControl =
-                            new Microsoft.Net.Http.Headers.CacheControlHeaderValue()
-                            {
-                                Public = true
-                            };
-                    }
+        if (url.Contains("resources"))
+        {
+            context.Response.GetTypedHeaders().CacheControl =
+                new Microsoft.Net.Http.Headers.CacheControlHeaderValue()
+                {
+                    Public = true
+                };
+        }
                     
 
-============================================
-public static IApplicationBuilder UseCommonConfigure(this IApplicationBuilder app, CommonConstants.Module module)
+ 
+       public static IApplicationBuilder UseCommonConfigure(this IApplicationBuilder app, CommonConstants.Module module)
         {
             app.UseForwardedHeaders(new ForwardedHeadersOptions
             {
