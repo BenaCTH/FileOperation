@@ -31,3 +31,118 @@ download 时 当文件超出指定大小后按照HttpWebRequest 的当时请求�
                 <div class="child" style="background-color: lightblue;">4</div>
             </div>
             <input type="button" value="Add" id="add" />
+            
+          
+# IE 浏览器不解析字体图标解决办法
+
+  if (url.Contains("resources"))
+                    {
+                        context.Response.GetTypedHeaders().CacheControl =
+                            new Microsoft.Net.Http.Headers.CacheControlHeaderValue()
+                            {
+                                Public = true
+                            };
+                    }
+                    
+
+============================================
+public static IApplicationBuilder UseCommonConfigure(this IApplicationBuilder app, CommonConstants.Module module)
+        {
+            app.UseForwardedHeaders(new ForwardedHeadersOptions
+            {
+                ForwardedHeaders = ForwardedHeaders.XForwardedFor |
+        ForwardedHeaders.XForwardedProto
+            });
+
+            app.UseCommonMiddleware();
+            var env = Environment.GetEnvironmentVariable(Constants.ASPNETCORE_ENVIRONMENT);
+            string deployHost = Environment.GetEnvironmentVariable(CommonConstants.AppSettingServiceName.ConfigDeployHostName);
+            logger.Debug($"ENVIRONMENT:{env}, deployHost:{deployHost}");
+            if (string.Equals(env, Constants.DEV_ENVIRONMENT, StringComparison.OrdinalIgnoreCase))
+            {
+                app.Use(async (context, next) =>
+                {
+                    var url = context.Request.Path.ToString();
+
+                    //request resources files
+                    if (url.Contains("resources"))
+                    {
+                        context.Response.GetTypedHeaders().CacheControl =
+                            new Microsoft.Net.Http.Headers.CacheControlHeaderValue()
+                            {
+                                Public = true
+                            };
+                    }
+                    else //other request, api and so on
+                    {
+                        context.Response.GetTypedHeaders().CacheControl =
+                            new Microsoft.Net.Http.Headers.CacheControlHeaderValue()
+                            {
+                                NoStore = true,
+                                NoCache = true,
+                                //Public = true,
+                                MustRevalidate = true
+                            };
+                        context.Response.Headers["Pragma"] = "no-cache";
+                        context.Response.Headers["Expires"] = "-1";
+                    }
+                    context.Response.Headers[Microsoft.Net.Http.Headers.HeaderNames.Vary] =
+                        new string[] { "Accept-Encoding" };
+                    context.Response.Headers["X-Frame-Options"] = "SAMEORIGIN";
+                    context.Response.Headers["X-XSS-Protection"] = "1;mode=block";
+                    //context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+                    context.Response.Headers["Strict-Transport-Security"] = "max-age=16070400;includeSubDomains";
+                    //context.Response.Headers[""]
+
+                    await next();
+                });
+            }
+            else
+            {
+                app.Use(async (context, next) =>
+                {
+                    var url = context.Request.Path.ToString();
+
+                    //request resources files
+                    if (url.Contains("resources"))
+                    {
+                        context.Response.GetTypedHeaders().CacheControl =
+                            new Microsoft.Net.Http.Headers.CacheControlHeaderValue()
+                            {
+                                Public = true
+                            };
+                    }
+                    else //other request, api and so on
+                    {
+                        context.Response.GetTypedHeaders().CacheControl =
+                            new Microsoft.Net.Http.Headers.CacheControlHeaderValue()
+                            {
+                                NoStore = true,
+                                NoCache = true,
+                                //Public = true,
+                                MustRevalidate = true
+                            };
+                        context.Response.Headers["Pragma"] = "no-cache";
+                        context.Response.Headers["Expires"] = "-1";
+                    }
+                    context.Response.Headers[Microsoft.Net.Http.Headers.HeaderNames.Vary] =
+                        new string[] { "Accept-Encoding" };
+                    context.Response.Headers["X-Frame-Options"] = "SAMEORIGIN";
+                    context.Response.Headers["X-XSS-Protection"] = "1;mode=block";
+                    context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+                    context.Response.Headers["Content-Security-Policy"] = $"script-src 'unsafe-inline' {deployHost}; base-uri 'none'; object-src 'none';";
+                    context.Response.Headers["Strict-Transport-Security"] = "max-age=16070400;includeSubDomains";
+                    //context.Response.Headers[""]
+
+                    await next();
+                });
+            }
+            app.UseCors("CorsPolicy");
+            app.UseStaticFiles();
+            app.UseCustomAuthentication();
+            app.UseCommonWorkflow(module);
+            app.UseMvc();
+            IdentityModelEventSource.ShowPII = true;
+
+            return app;
+        }
